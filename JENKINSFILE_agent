@@ -57,8 +57,8 @@ pipeline {
             }
             stage('Results'){
                 steps {
-                    stash name: 'unit-res'
-                    stash name: 'rest-res'
+                    unstash name: 'unit-res'
+                    unstash name: 'rest-res'
                     junit 'result*.xml'
                 }
             }
