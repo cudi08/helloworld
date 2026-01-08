@@ -39,12 +39,15 @@ pipeline {
                         agent {label 'linux2'}
                         steps {
                             catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                                unstash name:'code'
                                 sh '''
                                     export PYTHONPATH=$WORKSPACE
                                     export FLASK_APP=app/api.py
                                     flask run&
+                                    sleep 4
                                     java -jar wiremock-standalone-3.13.2.jar --port=9090 --root-dir test/wiremock &
                                     pytest --junitxml=result-rest.xml test/rest
+                                    sleep 10
                                 '''
                             }
                             stash name: 'rest-res', includes:'result-rest.xml'
