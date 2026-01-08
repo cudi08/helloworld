@@ -1,0 +1,61 @@
+pipeline {
+        agent any
+        
+        options { skipDefaultCheckout() }
+        
+        stages {
+            stage('Get Code'){
+                steps {
+                    //Obtener codigo del repo
+                    git url: 'https://github.com/cudi08/helloworld.git',
+                        branch: 'main'
+                    echo WORKSPACE
+                    sh 'ls -la'
+                    stash name:'code', includes'**''
+                }
+            }
+            stage('Build'){
+                steps {
+                    echo 'NO COMPILAMOS NADA'
+                }
+            }
+            stage('Tests') {
+                parallel {
+                    stage('Unit'){
+                        steps {
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                                unstash name:'code'
+                                sh '''
+                                export PYTHONPATH=$WORKSPACE
+                                pytest --junitxml=result-unit.xml test/unit
+                                '''
+                                
+                            }
+                            stash name: 'unit-res', includes:'result-unit.xml'
+                        }
+                    }
+                    stage('Rest'){
+                        steps {
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
+                                sh '''
+                                    export PYTHONPATH=$WORKSPACE
+                                    export FLASK_APP=app/api.py
+                                    flask run&
+                                    java -jar wiremock-standalone-3.13.2.jar --port=9090 --root-dir test/wiremock &
+                                    pytest --junitxml=result-rest.xml test/rest
+                                '''
+                            }
+                            stash name: 'rest-res', includes:'result-rest.xml'
+                        }
+                    }
+                }
+            }
+            stage('Results'){
+                steps {
+                    stash name: 'unit-res'
+                    stash name: 'rest-res'
+                    junit 'result*.xml'
+                }
+            }
+        }
+}
