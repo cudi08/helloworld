@@ -11,7 +11,7 @@ pipeline {
                         branch: 'main'
                     echo WORKSPACE
                     sh 'ls -la'
-                    stash name:'code', includes'**''
+                    stash name:'code', includes'**'
                 }
             }
             stage('Build'){
