@@ -1,38 +1,37 @@
 pipeline {
         agent any
-        
         options { skipDefaultCheckout() }
-        
         stages {
             stage('Get Code'){
+                agent {label 'linux1'}
                 steps {
                     //Obtener codigo del repo
+                    sh '''
+                        whoami
+                        hostname
+                        echo ${WORKSPACE}
+                    '''
                     git url: 'https://github.com/cudi08/helloworld.git',
                         branch: 'main'
-                    echo WORKSPACE
-                    sh 'ls -la'
                     stash name:'code', includes:'**'
                 }
             }
-            stage('Build'){
-                steps {
-                    echo 'NO COMPILAMOS NADA'
-                }
-            }
-            stage('Tests') {
-                parallel {
+            stage ('Tests Unit-Rest'){
+                parallel{
                     stage('Unit'){
-                        agent {label 'linux'}
+                        agent {label 'linux1'}
                         steps {
                             catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
                                 unstash name:'code'
                                 sh '''
+                                whoami
+                                hostname
+                                echo ${WORKSPACE}
                                 export PYTHONPATH=$WORKSPACE
                                 pytest --junitxml=result-unit.xml test/unit
                                 '''
-                                
+                                junit 'result-unit.xml'
                             }
-                            stash name: 'unit-res', includes:'result-unit.xml'
                         }
                     }
                     stage('Rest'){
@@ -41,25 +40,79 @@ pipeline {
                             catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE'){
                                 unstash name:'code'
                                 sh '''
+                                    whoami
+                                    hostname
+                                    echo ${WORKSPACE}
                                     export PYTHONPATH=$WORKSPACE
                                     export FLASK_APP=app/api.py
-                                    flask run&
-                                    sleep 4
-                                    java -jar wiremock-standalone-3.13.2.jar --port=9090 --root-dir test/wiremock &
-                                    pytest --junitxml=result-rest.xml test/rest
+                                    flask run --port=5000 &
+                                    java -jar /opt/wiremock/wiremock-standalone-3.13.2.jar --port=9090 --root-dir test/wiremock &
                                     sleep 10
+                                    pytest --junitxml=result-rest.xml test/rest
                                 '''
+                                junit 'result-rest.xml'
                             }
-                            stash name: 'rest-res', includes:'result-rest.xml'
+                        }
+                    }
+                    stage('Codigo estatico'){
+                        agent {label 'linux2'}
+                        steps {
+                            unstash name:'code'
+                            sh '''
+                                whoami
+                                hostname
+                                echo ${WORKSPACE}
+                                flake8 --format=pylint --exit-zero app>flake8.out
+                            '''
+                            recordIssues qualityGates: [[criticality: 'NOTE', integerThreshold: 8, threshold: 8.0, type: 'TOTAL'], [criticality: 'ERROR', integerThreshold: 10, threshold: 10.0, type: 'TOTAL']], sourceCodeRetention: 'LAST_BUILD', tools: [flake8(pattern: 'flake8.out')]
+                        }
+                    }
+                    stage('Cobertura'){
+                        agent {label 'linux2'}
+                        steps {
+                            unstash name:'code'
+                            sh'''
+                                whoami
+                                hostname
+                                echo ${WORKSPACE}
+                                export PYTHONPATH=$WORKSPACE
+                                coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
+                                coverage xml
+                            '''
+                            recordCoverage qualityGates: [[criticality: 'NOTE', integerThreshold: 95, metric: 'LINE', threshold: 95.0], [criticality: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0], [criticality: 'NOTE', integerThreshold: 90, metric: 'BRANCH', threshold: 90.0], [criticality: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
+                        }
+                    }
+                    stage('Seguridad'){
+                        agent {label 'linux1'}
+                        steps {
+                            unstash name:'code'
+                            sh'''
+                                whoami
+                                hostname
+                                echo ${WORKSPACE}
+                                export PYTHONPATH=$WORKSPACE
+                                bandit --exit-zero -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                            '''
+                            recordIssues qualityGates: [[criticality: 'NOTE', integerThreshold: 2, threshold: 2.0, type: 'TOTAL'], [criticality: 'ERROR', integerThreshold: 4, threshold: 4.0, type: 'TOTAL']], sourceCodeRetention: 'LAST_BUILD', tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')]
                         }
                     }
                 }
             }
-            stage('Results'){
+            stage('Rendimiento'){
                 steps {
-                    unstash name: 'unit-res'
-                    unstash name: 'rest-res'
-                    junit 'result*.xml'
+                    agent {label 'linux1'}
+                    unstash name:'code'
+                    sh'''
+                        whoami
+                        hostname
+                        echo ${WORKSPACE}
+                        export PYTHONPATH=$WORKSPACE
+                        export FLASK_APP=app/api.py
+                        flask run&
+                        sleep 10
+                        /opt/apache-jmeter-5.6.3/bin/jmeter.sh -n -t test/jmeter/flask.jmx -f -l flask.jtl
+                    '''
+                    perfReport sourceDataFiles: 'flask.jtl'
                 }
             }
         }
